@@ -1,22 +1,33 @@
+from typing import Optional
 from dotenv import load_dotenv
 import os
+from pathlib import Path
 
 load_dotenv()
 
 class Config:
-    _instance: 'Config' | None = None
+    _instance: Optional['Config'] = None
+    base_dir = Path(__file__).resolve().parents[2]
     mini_model: str = "gpt-4o-mini"
     regular_model: str = "gpt-4"
     openai_api_key: str
+    hf_token: str
+    data_dir = base_dir / 'data'
+    data_input_dir = data_dir / 'input'
+    all_collections_list_path = data_input_dir / 'all_collections.json'
+    collections_metadata_dir = data_input_dir / 'collections_metadata'
 
     def __new__(cls):
         if cls._instance is None:
-            api_key = os.getenv("OPENAI_API_KEY")
-            if api_key is None:
+            openai_api_key = os.getenv("OPENAI_API_KEY")
+            hf_token = os.getenv("HUGGINGFACE_API_KEY")
+            if openai_api_key is None:
                 raise ValueError("OPENAI_API_KEY not found in environment")
-
-            cls._instance = super(Config, cls).__new__(cls)
-            cls._instance.openai_api_key = api_key
+            cls._instance = super().__new__(cls)
+            cls._instance.openai_api_key = openai_api_key
+            cls.hf_token = hf_token
+            cls.data_dir.mkdir(parents=True, exist_ok=True)
+            cls.data_input_dir.mkdir(parents=True, exist_ok=True)
         return cls._instance
 
     @classmethod
