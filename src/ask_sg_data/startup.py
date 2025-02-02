@@ -161,47 +161,57 @@ def get_text_from_collection(collection: Dict[str, Any]) -> str:
         print(f"Description not found for collection: {name}")
     return f"Name: {name} \nDescription: {description}"
 
-def create_embeddings(config: Config, ignore_existing: bool = False, use_hf: bool = False) -> None:
-    # Check for collections list
-    if not os.path.isfile(config.all_collections_list_path):
-        raise ValueError("all collections don't exist! run the function to get the collections wrapper instead!")
+def create_embeddings(config: Config, ignore_existing: bool = False, use_hf: bool = False, batch_size: int = 50) -> None:
+   # Initial checks
+   if not os.path.isfile(config.all_collections_list_path):
+       raise ValueError("all collections don't exist! run the function to get the collections wrapper instead!")
 
-    # Check if embeddings already exist
-    if not ignore_existing and os.path.isfile(config.collections_embeddings_index):
-        print("Embeddings index already exists. Use ignore_existing=True to recreate.")
-        return
+   if not ignore_existing and os.path.isfile(config.collections_embeddings_index):
+       print("Embeddings index already exists. Use ignore_existing=True to recreate.")
+       return
 
-    # Load collections
-    with open(config.all_collections_list_path, 'r') as f:
-        collections_list = json.load(f)
+   # Load collections
+   with open(config.all_collections_list_path, 'r') as f:
+       collections_list = json.load(f)
 
-    # Verify metadata files exist
-    count_dir_correct = len([p for p in config.collections_metadata_dir.glob('*') if p.is_file()]) == len(collections_list)
-    if not count_dir_correct:
-        raise ValueError(f"Expected {len(collections_list)} json files but got only {len([p for p in config.collections_metadata_dir.glob('*') if p.is_file()])} json files")
+   # Verify metadata
+   count_dir_correct = len([p for p in config.collections_metadata_dir.glob('*') if p.is_file()]) == len(collections_list)
+   if not count_dir_correct:
+       raise ValueError(f"Expected {len(collections_list)} json files but got only {len([p for p in config.collections_metadata_dir.glob('*') if p.is_file()])} json files")
 
-    # Create embeddings directory if it doesn't exist
-    os.makedirs(os.path.dirname(config.collections_embeddings_index), exist_ok=True)
+   os.makedirs(os.path.dirname(config.collections_embeddings_index), exist_ok=True)
 
-    # Get embeddings
-    print(f"Creating embeddings for {len(collections_list)} collections...")
-    embeddings = []
-    for i, collection in enumerate(collections_list, 1):
-        text = get_text_from_collection(collection)
-        print(f"Processing {i}/{len(collections_list)}: {collection['name']}")
-        embedding = get_embedding_single_string(config=config, text=text, use_hf=use_hf)
-        embeddings.append(embedding)
-        if use_hf:
-                time.sleep(2)
+   embeddings = []
+   if use_hf:
+       # Single item processing for HF due to rate limits
+       print(f"Creating embeddings one by one for {len(collections_list)} collections using HF API...")
+       for i, collection in enumerate(collections_list, 1):
+           text = get_text_from_collection(collection)
+           print(f"Processing {i}/{len(collections_list)}: {collection['name']}")
+           embedding = get_embedding_single_string(config=config, text=text, use_hf=True)
+           embeddings.append(embedding)
+           time.sleep(2)
+   else:
+       # Batch processing for local embeddings
+       print(f"Creating embeddings in batches of {batch_size} using local model...")
+       for i in range(0, len(collections_list), batch_size):
+           batch = collections_list[i:i + batch_size]
+           print(f"Processing batch {i//batch_size + 1}/{(len(collections_list) + batch_size - 1)//batch_size}")
+           batch_texts = [get_text_from_collection(c) for c in batch]
 
+           model = SentenceTransformer('all-MiniLM-L6-v2')
+           batch_embeddings = model.encode(batch_texts, convert_to_tensor=False)
 
-    # Create and save Faiss index
-    embeddings_array = np.array(embeddings, dtype=np.float32)
-    dimension = len(embeddings[0])
-    index = faiss.IndexFlatL2(dimension)
-    index.add(embeddings_array)
-    faiss.write_index(index, str(config.collections_embeddings_index))
-    print(f"Created and saved FAISS index with {len(embeddings)} embeddings")
+           embeddings.extend(batch_embeddings.tolist())
+           print(f"Completed {min(i + batch_size, len(collections_list))}/{len(collections_list)} embeddings")
+
+   # Create and save Faiss index
+   embeddings_array = np.array(embeddings, dtype=np.float32)
+   dimension = len(embeddings[0])
+   index = faiss.IndexFlatL2(dimension)
+   index.add(embeddings_array)
+   faiss.write_index(index, str(config.collections_embeddings_index))
+   print(f"Created and saved FAISS index with {len(embeddings)} embeddings")
 
 
 
@@ -209,6 +219,6 @@ def main() -> None:
     config = Config.load()
     get_collections_wrapper(config)
     get_metadata_wrapper(config)
-    create_embeddings(config, ignore_existing=True, use_hf=False)
+    create_embeddings(config, ignore_existing=True, use_hf=False, batch_size=100)
 
 main()
