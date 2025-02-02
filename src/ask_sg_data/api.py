@@ -11,21 +11,30 @@ app = FastAPI(
     version="0.1.0"
 )
 
+class SearchSingleton:
+    _instance = None
+
+    @classmethod
+    def get_instance(cls) -> HybridSearch:
+        if cls._instance is None:
+            config = Config.load()
+
+            with open(config.all_collections_list_path, 'r') as f:
+                collections = json.load(f)
+
+            index = faiss.read_index(str(config.collections_embeddings_index))
+
+            cls._instance = HybridSearch(
+                collections=collections,
+                faiss_index=index
+            )
+        return cls._instance
+
+
 def get_search() -> HybridSearch:
     """Dependency to initialize search once and reuse"""
-    config = Config.load()
+    return SearchSingleton.get_instance()
 
-    # Load collections
-    with open(config.all_collections_list_path, 'r') as f:
-        collections = json.load(f)
-
-    # Load FAISS index
-    index = faiss.read_index(str(config.collections_embeddings_index))
-
-    return HybridSearch(
-        collections=collections,
-        faiss_index=index
-    )
 
 @app.get("/health")
 async def health_check():
