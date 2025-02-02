@@ -129,25 +129,27 @@ def get_metadata_wrapper(config: Config, ignore_existing:bool=False) -> None:
 
 
 def get_embedding_single_string(config: Config, text: str, use_hf: bool = True) -> List[float]:
-    print(f"getting embedding for {text} with use api as {use_hf}")
+    source = "HuggingFace API" if use_hf else "local sentence-transformers"
+    print(f"Getting embedding using {source}")
+
     if use_hf:
-       # HF API version
-       while True:
-           headers = {"Authorization": f"Bearer {config.hf_token}"}
-           payload = {"inputs": [text]}
-           response = requests.post(config.huggingface_embedding_endpoint, headers=headers, json=payload)
-           output = response.json()
+        # HF API version
+        while True:
+            headers = {"Authorization": f"Bearer {config.hf_token}"}
+            payload = {"inputs": [text]}
+            response = requests.post(config.huggingface_embedding_endpoint, headers=headers, json=payload)
+            output = response.json()
 
-           if isinstance(output, list):
-               return output[0]
+            if isinstance(output, list):
+                return output[0]
 
-           print(f"Error response: {output}")
-           time.sleep(1)
+            print(f"Error response: {output}")
+            time.sleep(1)
     else:
-       # Local embeddings using sentence-transformers
-       model = SentenceTransformer('all-MiniLM-L6-v2')  # Fast and lightweight model
-       embedding = model.encode(text, convert_to_tensor=False)  # Returns numpy array
-       return embedding.tolist()  # Convert to list to match HF API output format
+        # Local embeddings using sentence-transformers
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        embedding = model.encode(text, convert_to_tensor=False)
+        return embedding.tolist()
 
 
 def get_text_from_collection(collection: Dict[str, Any]) -> str:
@@ -159,40 +161,47 @@ def get_text_from_collection(collection: Dict[str, Any]) -> str:
         print(f"Description not found for collection: {name}")
     return f"Name: {name} \nDescription: {description}"
 
-def create_embeddings(config: Config, ignore_existing: bool = False) -> None:
-   # Check for collections list
-   if not os.path.isfile(config.all_collections_list_path):
-       raise ValueError("all collections don't exist! run the function to get the collections wrapper instead!")
+def create_embeddings(config: Config, ignore_existing: bool = False, use_hf: bool = False) -> None:
+    # Check for collections list
+    if not os.path.isfile(config.all_collections_list_path):
+        raise ValueError("all collections don't exist! run the function to get the collections wrapper instead!")
 
-   # Load collections
-   with open(config.all_collections_list_path, 'r') as f:
-       collections_list = json.load(f)
+    # Check if embeddings already exist
+    if not ignore_existing and os.path.isfile(config.collections_embeddings_index):
+        print("Embeddings index already exists. Use ignore_existing=True to recreate.")
+        return
 
-   # Verify metadata files exist
-   count_dir_correct = len([p for p in config.collections_metadata_dir.glob('*') if p.is_file()]) == len(collections_list)
-   if not count_dir_correct:
-       raise ValueError(f"Expected {len(collections_list)} json files but got only {len([p for p in config.collections_metadata_dir.glob('*') if p.is_file()])} json files")
+    # Load collections
+    with open(config.all_collections_list_path, 'r') as f:
+        collections_list = json.load(f)
 
-   # Get embeddings
-   embeddings = []
-   for collection in collections_list:
-       text = get_text_from_collection(collection)
-       name = collection['name']
-       print(f"Getting embedding for: {name}")
+    # Verify metadata files exist
+    count_dir_correct = len([p for p in config.collections_metadata_dir.glob('*') if p.is_file()]) == len(collections_list)
+    if not count_dir_correct:
+        raise ValueError(f"Expected {len(collections_list)} json files but got only {len([p for p in config.collections_metadata_dir.glob('*') if p.is_file()])} json files")
 
-       embedding = get_embedding_single_string(config=config, text=text, use_hf=False)
-       embeddings.append(embedding)
+    # Create embeddings directory if it doesn't exist
+    os.makedirs(os.path.dirname(config.collections_embeddings_index), exist_ok=True)
 
-       time.sleep(2)
+    # Get embeddings
+    print(f"Creating embeddings for {len(collections_list)} collections...")
+    embeddings = []
+    for i, collection in enumerate(collections_list, 1):
+        text = get_text_from_collection(collection)
+        print(f"Processing {i}/{len(collections_list)}: {collection['name']}")
+        embedding = get_embedding_single_string(config=config, text=text, use_hf=use_hf)
+        embeddings.append(embedding)
+        if use_hf:
+            time.sleep(2)
 
-   # Create and save Faiss index
-   embeddings_array = np.array(embeddings, dtype=np.float32)
-   dimension = len(embeddings[0])
-   index = faiss.IndexFlatL2(dimension)
-   index.add(embeddings_array)
 
-   faiss.write_index(index, str(config.collections_embeddings_index))
-
+    # Create and save Faiss index
+    embeddings_array = np.array(embeddings, dtype=np.float32)
+    dimension = len(embeddings[0])
+    index = faiss.IndexFlatL2(dimension)
+    index.add(embeddings_array)
+    faiss.write_index(index, str(config.collections_embeddings_index))
+    print(f"Created and saved FAISS index with {len(embeddings)} embeddings")
 
 
 
@@ -200,6 +209,6 @@ def main() -> None:
     config = Config.load()
     get_collections_wrapper(config)
     get_metadata_wrapper(config)
-    create_embeddings(config)
+    create_embeddings(config, ignore_existing=True, use_hf=False)
 
 main()
