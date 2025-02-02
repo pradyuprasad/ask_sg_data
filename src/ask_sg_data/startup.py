@@ -192,7 +192,7 @@ def create_embeddings(config: Config, ignore_existing: bool = False, use_hf: boo
         embedding = get_embedding_single_string(config=config, text=text, use_hf=use_hf)
         embeddings.append(embedding)
         if use_hf:
-            time.sleep(2)
+                time.sleep(2)
 
 
     # Create and save Faiss index
